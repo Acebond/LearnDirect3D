@@ -1,118 +1,204 @@
 #include <Windows.h>
 #include <d3d11.h>
 
-static ID3D11Device*            g_pd3dDevice           = nullptr;
-static ID3D11DeviceContext*     g_pd3dDeviceContext    = nullptr;
-static IDXGISwapChain*          g_pSwapChain           = nullptr;
-static UINT                     g_ResizeWidth          = 0;
-static UINT                     g_ResizeHeight         = 0;
-static ID3D11RenderTargetView*  g_mainRenderTargetView = nullptr;
+#include <d3dcompiler.h>
 
-bool CreateRenderTarget() {
-    ID3D11Texture2D* pBackBuffer = nullptr;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+#include <array>
 
-    if (pBackBuffer) {
-        g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+
+#pragma comment(lib,"d3dcompiler.lib")
+
+class Device {
+
+public:
+
+    Device(HWND hWnd) {
+
+        DXGI_SWAP_CHAIN_DESC sd = { 0 };
+
+        sd.BufferCount = 2;
+        sd.BufferDesc.Width = 0;
+        sd.BufferDesc.Height = 0;
+        sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        sd.BufferDesc.RefreshRate.Numerator = 60;
+        sd.BufferDesc.RefreshRate.Denominator = 1;
+        sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.OutputWindow = hWnd;
+        sd.SampleDesc.Count = 1;
+        sd.SampleDesc.Quality = 0;
+        sd.Windowed = TRUE;
+        sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+        const D3D_FEATURE_LEVEL featureLevelArray[] = {
+            D3D_FEATURE_LEVEL_11_0,
+            D3D_FEATURE_LEVEL_10_0,
+        };
+
+        HRESULT res = D3D11CreateDeviceAndSwapChain(
+            nullptr,
+            D3D_DRIVER_TYPE_HARDWARE,
+            nullptr,
+            0, // D3D11_CREATE_DEVICE_DEBUG
+            featureLevelArray,
+            2,
+            D3D11_SDK_VERSION,
+            &sd,
+            &pSwapChain,
+            &pDevice,
+            nullptr,
+            &pDeviceContext);
+
+        if (res != S_OK) {
+            throw "fuck";
+        }
+
+        ID3D11Texture2D* pBackBuffer = nullptr;
+        pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+        if (!pBackBuffer) {
+            throw "fuck";
+        }
+        pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &pRenderTargetView);
         pBackBuffer->Release();
-        return true;
+
     }
 
-    return false;
-}
+    Device(const Device&) = delete;
+    Device& operator=(const Device&) = delete;
 
-void CleanupRenderTarget() {
-    if (g_mainRenderTargetView) { 
-        g_mainRenderTargetView->Release(); 
-        g_mainRenderTargetView = nullptr; 
+    void DrawTestTriangle() {
+
+        HRESULT hr;
+
+        struct Vertex {
+            float x;
+            float y;
+        };
+
+        const Vertex vertices[] = {
+            {0.0f, 0.5f},
+            {0.5f, -0.5f},
+            {-0.5f, -0.5f},
+        };
+
+
+        ID3D11Buffer* pVertexBuffer = nullptr;
+        D3D11_BUFFER_DESC bd = { 0 };
+        bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        bd.Usage = D3D11_USAGE_DEFAULT;
+        bd.CPUAccessFlags = 0u;
+        bd.MiscFlags = 0u;
+        bd.ByteWidth = sizeof(vertices);
+        bd.StructureByteStride = sizeof(Vertex);
+
+
+        D3D11_SUBRESOURCE_DATA sd = { 0 };
+        sd.pSysMem = vertices;
+
+        
+
+        hr = pDevice->CreateBuffer(&bd, &sd, &pVertexBuffer);
+        if (hr != S_OK) {
+            throw "asd";
+        }
+        const UINT stride = sizeof(Vertex);
+        const UINT offset = 0u;
+        pDeviceContext->IASetVertexBuffers(0, 1, &pVertexBuffer, &stride, &offset);
+
+
+
+
+
+
+
+        ID3D11VertexShader *pVertexShader;
+
+        ID3DBlob *pBlob;
+        D3DReadFileToBlob(L"VertexShader.cso", &pBlob);
+
+        pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &pVertexShader);
+        pDeviceContext->VSSetShader(pVertexShader, nullptr, 0u);
+
+
+        ID3D11InputLayout* pInputLayout = nullptr;
+        const D3D11_INPUT_ELEMENT_DESC ied[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        };
+        pDevice->CreateInputLayout(
+            ied,
+            (UINT)std::size(ied),
+            pBlob->GetBufferPointer(),
+            pBlob->GetBufferSize(),
+            &pInputLayout);
+
+        pDeviceContext->IASetInputLayout(pInputLayout);
+
+
+
+        pBlob->Release();
+
+        ID3D11PixelShader* pPixelShader;
+        D3DReadFileToBlob(L"PixelShader.cso", &pBlob);
+        pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &pPixelShader);
+
+        pDeviceContext->PSSetShader(pPixelShader, nullptr, 0u);
+
+
+
+
+
+        pDeviceContext->OMSetRenderTargets(1u, &pRenderTargetView, nullptr);
+
+        pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+
+
+
+
+        D3D11_VIEWPORT vp = { 0 };
+        vp.Width = 800;
+        vp.Height = 600;
+        vp.MinDepth = 0;
+        vp.MaxDepth = 1;
+        vp.TopLeftX = 0;
+        vp.TopLeftY = 0;
+        pDeviceContext->RSSetViewports(1u, &vp);
+
+
+        pDeviceContext->Draw(std::size(vertices), 0u);
+
     }
-}
 
-bool CreateDeviceD3D(HWND hWnd) {
-
-    DXGI_SWAP_CHAIN_DESC sd = { 0 };
-
-    sd.BufferCount = 2;
-    sd.BufferDesc.Width = 0;
-    sd.BufferDesc.Height = 0;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferDesc.RefreshRate.Numerator = 60;
-    sd.BufferDesc.RefreshRate.Denominator = 1;
-    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = hWnd;
-    sd.SampleDesc.Count = 1;
-    sd.SampleDesc.Quality = 0;
-    sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-    UINT createDeviceFlags = 0;
-#ifndef NDEBUG
-    // For Windows 10 or 11, to create a device that supports the debug layer, enable the "Graphics Tools" optional feature. 
-    // Go to the Settings panel, Optional features, View features, and then look for "Graphics Tools".
-    createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif // DEBUG
-
-    D3D_FEATURE_LEVEL featureLevel;
-
-    const D3D_FEATURE_LEVEL featureLevelArray[] = {
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_0,
-    };
-
-    HRESULT res = D3D11CreateDeviceAndSwapChain(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        createDeviceFlags,
-        featureLevelArray,
-        2,
-        D3D11_SDK_VERSION,
-        &sd,
-        &g_pSwapChain,
-        &g_pd3dDevice,
-        &featureLevel,
-        &g_pd3dDeviceContext);
-
-    if (res != S_OK) {
-        return false;
+    ~Device() {
+        if (pRenderTargetView) {
+            pRenderTargetView->Release();
+            pRenderTargetView = nullptr;
+        }
+        if (pSwapChain) {
+            pSwapChain->Release();
+            pSwapChain = nullptr;
+        }
+        if (pDeviceContext) {
+            pDeviceContext->Release();
+            pDeviceContext = nullptr;
+        }
+        if (pDevice) {
+            pDevice->Release();
+            pDevice = nullptr;
+        }
     }
 
-    return CreateRenderTarget();
-}
-
-void CleanupDeviceD3D() {
-
-    CleanupRenderTarget();
-
-    if (g_pSwapChain) { 
-        g_pSwapChain->Release(); 
-        g_pSwapChain = nullptr; 
-    }
-    if (g_pd3dDeviceContext) { 
-        g_pd3dDeviceContext->Release(); 
-        g_pd3dDeviceContext = nullptr; 
-    }
-    if (g_pd3dDevice) { 
-        g_pd3dDevice->Release(); 
-        g_pd3dDevice = nullptr; 
-    }
-}
+public:
+    ID3D11Device*           pDevice           = nullptr;
+    ID3D11DeviceContext*    pDeviceContext    = nullptr;
+    IDXGISwapChain*         pSwapChain        = nullptr;
+    ID3D11RenderTargetView* pRenderTargetView = nullptr;
+};
 
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     switch (msg) {
 
-    case WM_SIZE:
-        if (wParam == SIZE_MINIMIZED)
-            return 0;
-        g_ResizeWidth = (UINT)LOWORD(lParam); // Queue resize
-        g_ResizeHeight = (UINT)HIWORD(lParam);
-        return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-            return 0;
-        break;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -156,9 +242,7 @@ int main(void) {
         return 1;
     }
 
-    if (!CreateDeviceD3D(hWnd)) {
-        goto cleanup;
-    }
+    auto d = Device(hWnd);
 
     ShowWindow(hWnd, SW_SHOW);
     UpdateWindow(hWnd);
@@ -174,25 +258,18 @@ int main(void) {
             }
         }
 
-        // Handle window resize (we don't resize directly in the WM_SIZE handler)
-        if (g_ResizeWidth != 0 && g_ResizeHeight != 0) {
-            CleanupRenderTarget();
-            g_pSwapChain->ResizeBuffers(0, g_ResizeWidth, g_ResizeHeight, DXGI_FORMAT_UNKNOWN, 0);
-            g_ResizeWidth = g_ResizeHeight = 0;
-            CreateRenderTarget();
-        }
+        const float clearColor[4] = { 0.5f, 0.f, 0.f, 1.f };
 
-        const float clearColor[4] = { 0.f, 0.f, 0.f, 1.f };
+        d.pDeviceContext->ClearRenderTargetView(d.pRenderTargetView, clearColor);
 
-        g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clearColor);
+        d.DrawTestTriangle();
+        //g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
+        //g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clearColor);
 
-        g_pSwapChain->Present(1, 0); // Present with vsync
+        d.pSwapChain->Present(1, 0); // Present with vsync
         // g_pSwapChain->Present(0, 0); // Present without vsync
     }
 
-cleanup:
-    CleanupDeviceD3D();
     DestroyWindow(hWnd);
     UnregisterClass(wc.lpszClassName, wc.hInstance);
 	return 0;
